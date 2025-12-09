@@ -154,7 +154,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={isListening ? "Listening..." : "Type or speak your message..."}
+          placeholder={isListening ? "Listening..." : "Ask me to code, or try '/image <prompt>'"}
           disabled={isLoading}
           rows={1}
           className="flex-1 bg-gray-800 border border-gray-600 rounded-lg p-3 resize-none focus:ring-2 focus:ring-cyan-500 focus:outline-none transition-all duration-200 disabled:opacity-50 max-h-48"

@@ -1,15 +1,15 @@
-
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { Chat } from '@google/genai';
 import { Message } from './types';
 import { Role } from './types';
-import { initializeChat, sendMessageToAI } from './services/geminiService';
+import { initializeChat, sendMessageToAI, generateImage } from './services/geminiService';
 import Header from './components/Header';
 import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
 import ErrorDisplay from './components/ErrorDisplay';
 
 const CHAT_STORAGE_KEY = 'gemini-chat-session';
+const INITIAL_GREETING = "Hello! I am a super-intelligent AI, an expert programmer, and a creative assistant. Ask me to write code, generate images with '/image <your prompt>', or anything else you can imagine!";
 
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -28,17 +28,24 @@ const App: React.FC = () => {
           timestamp: new Date(msg.timestamp), // Re-hydrate Date objects
         }));
         setMessages(savedMessages);
-        const historyForAI = savedMessages.map(({ role, parts }) => ({ role, parts }));
+        const historyForAI = savedMessages
+            .map(({ role, parts }) => ({
+                role,
+                // Ensure only text parts are sent as history to the text model
+                parts: parts.filter(part => 'text' in part).map(part => ({ text: (part as { text: string }).text }))
+            }))
+            .filter(msg => msg.parts.length > 0);
+            
         // Remove last model response if it was an error message placeholder
         const lastMessage = historyForAI[historyForAI.length - 1];
-        if(lastMessage.role === Role.MODEL && lastMessage.parts[0].text.startsWith('Sorry, I encountered an error:')){
+        if(lastMessage && lastMessage.role === Role.MODEL && lastMessage.parts[0].text.startsWith('Sorry, I encountered an error:')){
             historyForAI.pop();
         }
         chatSession.current = initializeChat(historyForAI);
       } else {
         const initialMessage = {
           role: Role.MODEL,
-          parts: [{ text: "Hello! I am a super-intelligent AI with memory. How can I assist you today?" }],
+          parts: [{ text: INITIAL_GREETING }],
           timestamp: new Date(),
         };
         setMessages([initialMessage]);
@@ -71,47 +78,72 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
 
-    try {
-      if (!chatSession.current) {
-        throw new Error("Chat session is not initialized.");
-      }
-
-      const stream = await sendMessageToAI(chatSession.current, text);
-      
-      let modelResponse = '';
-      const modelMessage: Message = {
+    // Image Generation Flow
+    if (text.trim().toLowerCase().startsWith('/image ')) {
+      const prompt = text.trim().substring(7);
+      try {
+        const modelParts = await generateImage(prompt);
+        const modelMessage: Message = {
           role: Role.MODEL,
-          parts: [{ text: '' }],
+          parts: modelParts,
           timestamp: new Date(),
-      };
-      
-      setMessages(prev => [...prev, modelMessage]);
-
-      for await (const chunk of stream) {
-        modelResponse += chunk;
-        setMessages(prev => {
-          const newMessages = [...prev];
-          const lastMessage = newMessages[newMessages.length - 1];
-          if (lastMessage && lastMessage.role === Role.MODEL) {
-            lastMessage.parts = [{ text: modelResponse }];
-          }
-          return newMessages;
-        });
+        };
+        setMessages(prev => [...prev, modelMessage]);
+      } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : "An unknown error occurred.";
+        setError(errorMessage);
+        const errorModelMessage: Message = {
+            role: Role.MODEL,
+            parts: [{ text: `Sorry, I failed to generate the image: ${errorMessage}` }],
+            timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorModelMessage]);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : "An unknown error occurred.";
-      setError(errorMessage);
-       setMessages(prev => {
-          const newMessages = [...prev];
-          const lastMessage = newMessages[newMessages.length - 1];
-          // Replace the loading placeholder with an error message
-          if (lastMessage && lastMessage.role === Role.MODEL) {
-              lastMessage.parts = [{ text: `Sorry, I encountered an error: ${errorMessage}` }];
-          }
-          return newMessages;
-       });
-    } finally {
-      setIsLoading(false);
+    } else {
+      // Text Chat Flow
+      try {
+        if (!chatSession.current) {
+          throw new Error("Chat session is not initialized.");
+        }
+
+        const stream = await sendMessageToAI(chatSession.current, text);
+        
+        let modelResponse = '';
+        const modelMessage: Message = {
+            role: Role.MODEL,
+            parts: [{ text: '' }],
+            timestamp: new Date(),
+        };
+        
+        setMessages(prev => [...prev, modelMessage]);
+
+        for await (const chunk of stream) {
+          modelResponse += chunk;
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            if (lastMessage && lastMessage.role === Role.MODEL) {
+              lastMessage.parts = [{ text: modelResponse }];
+            }
+            return newMessages;
+          });
+        }
+      } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : "An unknown error occurred.";
+        setError(errorMessage);
+        setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            if (lastMessage && lastMessage.role === Role.MODEL) {
+                lastMessage.parts = [{ text: `Sorry, I encountered an error: ${errorMessage}` }];
+            }
+            return newMessages;
+        });
+      } finally {
+        setIsLoading(false);
+      }
     }
   }, [isLoading]);
 
@@ -120,7 +152,7 @@ const App: React.FC = () => {
       localStorage.removeItem(CHAT_STORAGE_KEY);
       const initialMessage = {
           role: Role.MODEL,
-          parts: [{ text: "Hello! I am a super-intelligent AI with memory. How can I assist you today?" }],
+          parts: [{ text: INITIAL_GREETING }],
           timestamp: new Date(),
       };
       setMessages([initialMessage]);
@@ -137,7 +169,7 @@ const App: React.FC = () => {
     }
     return messages.filter(msg =>
       msg.parts.some(part =>
-        part.text.toLowerCase().includes(searchQuery.toLowerCase())
+        'text' in part && part.text.toLowerCase().includes(searchQuery.toLowerCase())
       )
     );
   }, [messages, searchQuery]);
