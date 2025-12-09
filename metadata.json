@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Memory Chat",
+  "description": "A sophisticated AI chat application powered by the Gemini API. It features a persistent memory to maintain context throughout the conversation, enabling more coherent and intelligent interactions.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
